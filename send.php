@@ -3,18 +3,20 @@
  * Обработчик заявок с лендинга.
  * Отправляет заявку в Telegram и дублирует на почту, пишет CSV-журнал.
  *
- * Перед публикацией заполните блок настроек ниже.
- * Файл leads.csv должен быть закрыт от прямого доступа — см. .htaccess в этой же папке.
+ * Настройки — в config.local.php (скопируйте из config.example.php).
+ * Этот файл не попадает в git: токен бота даёт полный доступ к нему.
+ * Файл leads.csv закрыт от прямого доступа — см. .htaccess в этой же папке.
  */
 
-// ------------------------- НАСТРОЙКИ -------------------------
-$TG_TOKEN   = '';                       // токен бота от @BotFather
-$TG_CHAT    = '';                       // ваш chat_id, узнать у @userinfobot
-$MAIL_TO    = 'mail@domain.ru';         // куда дублировать на почту
-$MAIL_FROM  = 'site@domain.ru';         // ящик на вашем домене
+$configFile = __DIR__ . '/config.local.php';
+$cfg = is_file($configFile) ? require $configFile : [];
+
+$TG_TOKEN   = $cfg['tg_token']  ?? '';
+$TG_CHAT    = $cfg['tg_chat']   ?? '';
+$MAIL_TO    = $cfg['mail_to']   ?? '';
+$MAIL_FROM  = $cfg['mail_from'] ?? '';
 $LOG_FILE   = __DIR__ . '/leads.csv';
-$MIN_SECONDS_BETWEEN = 20;              // антиспам: пауза между заявками с одного IP
-// -------------------------------------------------------------
+$MIN_SECONDS_BETWEEN = $cfg['min_seconds_between'] ?? 20;
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -95,7 +97,7 @@ if ($TG_TOKEN && $TG_CHAT) {
 }
 
 // ---- Почта ----
-if ($MAIL_TO) {
+if ($MAIL_TO && $MAIL_FROM) {
     $headers  = "From: Сайт <{$MAIL_FROM}>\r\n";
     $headers .= "Content-Type: text/plain; charset=utf-8\r\n";
     if (@mail($MAIL_TO, 'Заявка с сайта: ' . $phone, $text, $headers)) $sent = true;
