@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /send.php
+Disallow: /leads.csv
+Disallow: /consent.html
+
+# ЗАМЕНИТЬ домен на реальный после регистрации
+Sitemap: https://avtozalog-kazan.ru/sitemap.xml
+Host: https://avtozalog-kazan.ru

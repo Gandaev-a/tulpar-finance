@@ -1,0 +1,116 @@
+<?php
+/**
+ * Обработчик заявок с лендинга.
+ * Отправляет заявку в Telegram и дублирует на почту, пишет CSV-журнал.
+ *
+ * Перед публикацией заполните блок настроек ниже.
+ * Файл leads.csv должен быть закрыт от прямого доступа — см. .htaccess в этой же папке.
+ */
+
+// ------------------------- НАСТРОЙКИ -------------------------
+$TG_TOKEN   = '';                       // токен бота от @BotFather
+$TG_CHAT    = '';                       // ваш chat_id, узнать у @userinfobot
+$MAIL_TO    = 'mail@domain.ru';         // куда дублировать на почту
+$MAIL_FROM  = 'site@domain.ru';         // ящик на вашем домене
+$LOG_FILE   = __DIR__ . '/leads.csv';
+$MIN_SECONDS_BETWEEN = 20;              // антиспам: пауза между заявками с одного IP
+// -------------------------------------------------------------
+
+header('Content-Type: application/json; charset=utf-8');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    exit(json_encode(['ok' => false, 'error' => 'method']));
+}
+
+// Ловушка для ботов: поле скрыто от людей, заполняется только автоматикой.
+if (!empty($_POST['company'])) {
+    exit(json_encode(['ok' => true]));   // молча принимаем, но никуда не отправляем
+}
+
+// Простой лимит по частоте.
+session_start();
+$now = time();
+if (isset($_SESSION['last_lead']) && $now - $_SESSION['last_lead'] < $MIN_SECONDS_BETWEEN) {
+    http_response_code(429);
+    exit(json_encode(['ok' => false, 'error' => 'too_fast']));
+}
+
+function clean($key, $limit = 200) {
+    $v = isset($_POST[$key]) ? (string)$_POST[$key] : '';
+    $v = strip_tags(trim($v));
+    return mb_substr($v, 0, $limit);
+}
+
+$name  = clean('name', 80);
+$phone = clean('phone', 30);
+$car   = clean('car', 120);
+$sum   = clean('amount', 60);
+$cSum  = clean('calc_sum', 40);
+$cTerm = clean('calc_term', 20);
+$cCar  = clean('calc_car', 40);
+$page  = clean('page', 200);
+
+// Телефон обязателен и должен содержать не меньше 10 цифр.
+$digits = preg_replace('/\D+/', '', $phone);
+if (strlen($digits) < 10) {
+    http_response_code(422);
+    exit(json_encode(['ok' => false, 'error' => 'phone']));
+}
+
+$_SESSION['last_lead'] = $now;
+
+$ip  = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
+$utm = [];
+foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term'] as $k) {
+    if (!empty($_POST[$k])) $utm[] = $k . '=' . clean($k, 60);
+}
+
+$lines = [
+    "🚗 Новая заявка с сайта",
+    "",
+    "Имя: "      . ($name  !== '' ? $name  : '—'),
+    "Телефон: "  . $phone,
+    "Авто: "     . ($car   !== '' ? $car   : '—'),
+    "Сумма: "    . ($sum   !== '' ? $sum   : '—'),
+    "Калькулятор: {$cSum} на {$cTerm}, авто {$cCar}",
+    "Страница: " . ($page !== '' ? $page : '/'),
+];
+if ($utm)  $lines[] = "Метки: " . implode(' · ', $utm);
+$lines[] = "Время: " . date('d.m.Y H:i');
+$text = implode("\n", $lines);
+
+// ---- Telegram ----
+$sent = false;
+if ($TG_TOKEN && $TG_CHAT) {
+    $ch = curl_init("https://api.telegram.org/bot{$TG_TOKEN}/sendMessage");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 8,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => ['chat_id' => $TG_CHAT, 'text' => $text],
+    ]);
+    $sent = curl_exec($ch) !== false && curl_getinfo($ch, CURLINFO_HTTP_CODE) === 200;
+    curl_close($ch);
+}
+
+// ---- Почта ----
+if ($MAIL_TO) {
+    $headers  = "From: Сайт <{$MAIL_FROM}>\r\n";
+    $headers .= "Content-Type: text/plain; charset=utf-8\r\n";
+    if (@mail($MAIL_TO, 'Заявка с сайта: ' . $phone, $text, $headers)) $sent = true;
+}
+
+// ---- Журнал ----
+if ($fh = @fopen($LOG_FILE, 'a')) {
+    fputcsv($fh, [date('Y-m-d H:i:s'), $name, $phone, $car, $sum, $cSum, $cTerm, $page, implode(' ', $utm), $ip]);
+    fclose($fh);
+    $sent = true;
+}
+
+if (!$sent) {
+    http_response_code(500);
+    exit(json_encode(['ok' => false, 'error' => 'delivery']));
+}
+
+echo json_encode(['ok' => true]);
