@@ -5,8 +5,9 @@
  *
  * Настройки — в config.local.php (скопируйте из config.example.php).
  * Этот файл не попадает в git: токен бота даёт полный доступ к нему.
- * Файл leads.csv закрыт от прямого доступа — см. .htaccess в этой же папке.
  */
+
+ini_set('display_errors', '0');   // предупреждения PHP не должны ломать JSON-ответ форме
 
 $configFile = __DIR__ . '/config.local.php';
 $cfg = is_file($configFile) ? require $configFile : [];
@@ -15,9 +16,14 @@ $TG_TOKEN   = $cfg['tg_token']  ?? '';
 $TG_CHAT    = $cfg['tg_chat']   ?? '';
 $MAIL_TO    = $cfg['mail_to']   ?? '';
 $MAIL_FROM  = $cfg['mail_from'] ?? '';
-$LOG_FILE   = __DIR__ . '/leads.csv';
 $MIN_SECONDS_BETWEEN = $cfg['min_seconds_between'] ?? 20;
 
+// Журнал заявок — на уровень выше public_html, куда веб-сервер не отдаёт файлы.
+// Если туда писать нельзя, остаётся рядом; там его закрывает .htaccess.
+$logDir   = is_writable(dirname(__DIR__)) ? dirname(__DIR__) : __DIR__;
+$LOG_FILE = $logDir . '/leads.csv';
+
+date_default_timezone_set('Europe/Moscow');   // Казань живёт по московскому времени
 header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -60,11 +66,17 @@ if (strlen($digits) < 10) {
     exit(json_encode(['ok' => false, 'error' => 'phone']));
 }
 
+// Без согласия на обработку ПДн заявку не принимаем, даже если форму обошли.
+if (($_POST['consent'] ?? '') !== '1') {
+    http_response_code(422);
+    exit(json_encode(['ok' => false, 'error' => 'consent']));
+}
+
 $_SESSION['last_lead'] = $now;
 
 $ip  = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
 $utm = [];
-foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term'] as $k) {
+foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $k) {
     if (!empty($_POST[$k])) $utm[] = $k . '=' . clean($k, 60);
 }
 
@@ -93,19 +105,25 @@ if ($TG_TOKEN && $TG_CHAT) {
         CURLOPT_POSTFIELDS     => ['chat_id' => $TG_CHAT, 'text' => $text],
     ]);
     $sent = curl_exec($ch) !== false && curl_getinfo($ch, CURLINFO_HTTP_CODE) === 200;
-    curl_close($ch);
 }
 
 // ---- Почта ----
 if ($MAIL_TO && $MAIL_FROM) {
-    $headers  = "From: Сайт <{$MAIL_FROM}>\r\n";
+    $utf = function ($s) { return '=?UTF-8?B?' . base64_encode($s) . '?='; };
+    $headers  = "From: " . $utf('Сайт') . " <{$MAIL_FROM}>\r\n";
+    $headers .= "MIME-Version: 1.0\r\n";
     $headers .= "Content-Type: text/plain; charset=utf-8\r\n";
-    if (@mail($MAIL_TO, 'Заявка с сайта: ' . $phone, $text, $headers)) $sent = true;
+    if (@mail($MAIL_TO, $utf('Заявка с сайта: ' . $phone), $text, $headers)) $sent = true;
 }
 
 // ---- Журнал ----
+// Excel исполняет ячейки, начинающиеся с = + - @, как формулы — экранируем.
+$csvSafe = function ($v) {
+    return preg_match('/^[=+\-@]/', (string)$v) ? "'" . $v : $v;
+};
 if ($fh = @fopen($LOG_FILE, 'a')) {
-    fputcsv($fh, [date('Y-m-d H:i:s'), $name, $phone, $car, $sum, $cSum, $cTerm, $page, implode(' ', $utm), $ip]);
+    $row = [date('Y-m-d H:i:s'), $name, $phone, $car, $sum, $cSum, $cTerm, $page, implode(' ', $utm), $ip];
+    fputcsv($fh, array_map($csvSafe, $row), ',', '"', '');
     fclose($fh);
     $sent = true;
 }

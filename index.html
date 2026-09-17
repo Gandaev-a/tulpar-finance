@@ -9,12 +9,27 @@
 <meta property="og:description" content="До 3 000 000 ₽ за час под залог автомобиля. Машина остаётся у вас. Договор у нотариуса, залог в реестре ФНП.">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="ru_RU">
+<meta property="og:url" content="https://avtozalog-kazan.ru/">
+<link rel="canonical" href="https://avtozalog-kazan.ru/">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
 
-<!-- ЯНДЕКС.МЕТРИКА: вставьте сюда код счётчика из metrika.yandex.ru,
-     затем замените ym(0, 'reachGoal', 'lead') внизу файла на номер своего счётчика -->
+<!-- Yandex.Metrika counter: считаем только боевой домен, демо на GitHub Pages статистику не портит -->
+<script type="text/javascript">
+  var METRIKA_ID = 112739731;
+  if (/(^|\.)avtozalog-kazan\.ru$/.test(location.hostname)) {
+    (function(m,e,t,r,i,k,a){
+        m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+        m[i].l=1*new Date();
+        for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+        k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+    })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=112739731', 'ym');
+
+    ym(112739731, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+  }
+</script>
+<!-- /Yandex.Metrika counter -->
 
 <style>
 :root{
@@ -341,6 +356,7 @@ footer a:hover{color:#fff}
 </style>
 </head>
 <body>
+<noscript><div><img src="https://mc.yandex.ru/watch/112739731" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
 
 <header>
   <div class="wrap nav">
@@ -676,7 +692,7 @@ footer a:hover{color:#fff}
         <input type="text" name="company" tabindex="-1" autocomplete="off" aria-hidden="true"
                style="position:absolute;left:-9999px;opacity:0;height:0;width:0">
         <label class="consent">
-          <input type="checkbox" id="fconsent" required>
+          <input type="checkbox" id="fconsent" name="consent" value="1" required>
           <span>Даю <a href="consent.html" target="_blank" rel="noopener">согласие на обработку персональных данных</a>, ознакомлен с <a href="privacy.html" target="_blank" rel="noopener">политикой обработки данных</a> и принимаю <a href="terms.html" target="_blank" rel="noopener">пользовательское соглашение</a>.</span>
         </label>
         <button class="btn btn-primary" type="submit">Отправить заявку</button>
@@ -724,7 +740,7 @@ footer a:hover{color:#fff}
     <div class="foot-legal">
       <p>
         ИП Гандаев Ахмед Эдисолтович · ИНН 245907807607 · ОГРНИП 326246800040103 ·
-        e-mail: <!-- ЗАМЕНИТЬ после регистрации домена -->info@ваш-домен.ru · Работаем в г. Казани и Республике Татарстан
+        e-mail: info@avtozalog-kazan.ru · Работаем в г. Казани и Республике Татарстан
       </p>
       <div class="psk">
         Займы предоставляются ИП Гандаевым А. Э. за счёт собственных средств на предпринимательские цели. Сумма займа от 50 000 до 3 000 000 ₽. Срок от 3 до 48 месяцев. Процентная ставка от 2,9% до 5,0% в месяц, что соответствует полной стоимости займа от 40,9% до 79,6% годовых. Обеспечение — залог транспортного средства с регистрацией уведомления в реестре ФНП. Комиссии за выдачу, обслуживание и досрочное погашение не взимаются. Неустойка за просрочку — 0,05% от просроченного платежа за день. Пример: займ 600 000 ₽ на 24 месяца по ставке 3,5% в месяц — ежемесячный платёж 37 364 ₽, общая сумма к возврату 896 736 ₽. Информация не является публичной офертой; условия конкретной сделки определяются договором. Полные условия — в разделе <a href="tariffs.html" style="color:#8A998F">«Тарифы и условия»</a>.
@@ -750,7 +766,9 @@ footer a:hover{color:#fff}
   "@type": "FinancialService",
   "name": "Тулпар Финанс",
   "description": "Займы под залог автомобиля и ПТС в Казани на предпринимательские цели",
+  "url": "https://avtozalog-kazan.ru/",
   "telephone": "+7 923 333-21-95",
+  "email": "info@avtozalog-kazan.ru",
   "areaServed": { "@type": "City", "name": "Казань" },
   "address": { "@type": "PostalAddress", "addressLocality": "Казань", "addressRegion": "Республика Татарстан", "addressCountry": "RU" },
   "openingHours": "Mo-Su 09:00-21:00",
@@ -825,6 +843,15 @@ footer a:hover{color:#fff}
   render();
 
   // ---- форма ----
+  function goal(name){
+    if (window.ym) ym(METRIKA_ID, 'reachGoal', name);
+  }
+
+  // звонок — отдельная цель: в нише половина обращений идёт по телефону
+  document.addEventListener('click', function(e){
+    if (e.target.closest('a[href^="tel:"]')) goal('phone');
+  });
+
   var form = document.getElementById('leadForm');
   var status = document.getElementById('formStatus');
 
@@ -855,6 +882,10 @@ footer a:hover{color:#fff}
     data.append('calc_term', document.getElementById('termVal').textContent);
     data.append('calc_car',  document.getElementById('carVal').textContent);
     data.append('page', location.pathname + location.search);
+    var qs = new URLSearchParams(location.search);
+    ['utm_source','utm_medium','utm_campaign','utm_term','utm_content'].forEach(function(k){
+      if (qs.get(k)) data.append(k, qs.get(k));
+    });
 
     fetch('/send.php', {method:'POST', body:data})
       .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
@@ -863,7 +894,7 @@ footer a:hover{color:#fff}
         status.textContent = 'Заявка отправлена. Перезвоним в течение 15 минут.';
         status.style.display = 'block';
         btn.textContent = 'Отправлено';
-        if (window.ym) ym(0, 'reachGoal', 'lead');   // ЗАМЕНИТЬ 0 на номер счётчика Метрики
+        goal('lead');
       })
       .catch(function(){
         status.style.color = '#A9832E';
