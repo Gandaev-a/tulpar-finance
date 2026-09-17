@@ -44,19 +44,38 @@ ftpc() { curl -sS --netrc-file "$NETRC" $TLS "$@"; }
 
 # ---------- подключение ----------
 bold "Подключение"
+connect_failed() {
+  bad "не удалось подключиться:"
+  sed 's/^/    /' "$TMP/err.txt"
+  case "$1" in
+    67) echo "    Сервер отклонил логин или пароль — сверьте их в панели Timeweb." ;;
+    6)  echo "    Хост не найден — проверьте адрес в панели Timeweb." ;;
+    *)  echo "    Похоже на сетевую помеху. Если включён VPN — выключите его и запустите скрипт снова:"
+        echo "    хостинг в России, VPN для него не нужен, а FTP через туннель часто не проходит." ;;
+  esac
+  exit 1
+}
+
 TLS="--ssl-reqd"
-if ! ftpc --list-only "ftp://$FTP_HOST/" > "$TMP/root.txt" 2> "$TMP/err.txt"; then
-  TLS=""
-  if ftpc --list-only "ftp://$FTP_HOST/" > "$TMP/root.txt" 2> "$TMP/err.txt"; then
-    warn "сервер не принял шифрованное соединение, работаю без TLS"
-  else
-    bad "не удалось подключиться:"
-    sed 's/^/    /' "$TMP/err.txt"
-    echo "    Проверьте хост, логин и пароль в панели Timeweb."
-    exit 1
-  fi
-else
+ftpc --list-only "ftp://$FTP_HOST/" > "$TMP/root.txt" 2> "$TMP/err.txt"
+rc=$?
+if [ "$rc" = 0 ]; then
   ok "шифрованное соединение установлено"
+elif [ "$rc" = 64 ]; then
+  # 64 — сервер работает, но не поддерживает TLS. Только в этом случае
+  # пробуем без шифрования; при сетевых сбоях пароль открытым текстом не шлём.
+  read -r -p "  Сервер не поддерживает шифрование. Подключиться без него? [y/N]: " ANS
+  case "$ANS" in
+    y*|Y*|д*|Д*) ;;
+    *) bad "отменено: без шифрования не подключаюсь"; exit 1 ;;
+  esac
+  TLS=""
+  ftpc --list-only "ftp://$FTP_HOST/" > "$TMP/root.txt" 2> "$TMP/err.txt"
+  rc=$?
+  [ "$rc" = 0 ] || connect_failed "$rc"
+  warn "работаю без шифрования"
+else
+  connect_failed "$rc"
 fi
 
 tr -d '\r' < "$TMP/root.txt" > "$TMP/root.clean"
