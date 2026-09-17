@@ -152,11 +152,16 @@ url = "https://api.telegram.org/bot$TG_TOKEN/sendMessage"
 data-urlencode = "chat_id=$TG_CHAT"
 data-urlencode = "text=✅ Бот подключён к сайту $DOMAIN. Сюда будут приходить заявки."
 EOF
-    if grep -q '"ok":true' "$TMP/tg.json"; then
+    lrc=$?
+    # Заявки в Telegram отправляет сервер, а не этот компьютер. Если отсюда
+    # Telegram недоступен (без VPN это обычное дело), связь проверим с сервера.
+    if [ "$lrc" != 0 ]; then
+      warn "с этого компьютера Telegram недоступен — проверю связь с сервера"
+    elif grep -q '"ok":true' "$TMP/tg.json"; then
       ok "тестовое сообщение пришло в Telegram"
     else
-      bad "Telegram не принял сообщение:"
-      sed 's/^/    /' "$TMP/tg.json" "$TMP/err.txt"
+      bad "Telegram отклонил настройки:"
+      sed 's/^/    /' "$TMP/tg.json"
       echo "    Проверьте токен и что вы нажали «Start» в чате со своим ботом."
       exit 1
     fi
@@ -177,6 +182,61 @@ EOF
     ;;
 esac
 
+# Одноразовый скрипт с случайным именем: сервер сам отправляет сообщение
+# в Telegram с настройками из config.local.php, после чего файл удаляется.
+TG_STATUS=unknown
+server_tg_check() {
+  local name="tgcheck-$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 20).php"
+  cat > "$TMP/$name" <<'PHP'
+<?php
+ini_set('display_errors', '0');
+header('Content-Type: text/plain; charset=utf-8');
+$f = __DIR__ . '/config.local.php';
+if (!is_file($f)) { exit('NO_CONFIG'); }
+$cfg = require $f;
+if (empty($cfg['tg_token']) || empty($cfg['tg_chat'])) { exit('NO_CONFIG'); }
+$ch = curl_init('https://api.telegram.org/bot' . $cfg['tg_token'] . '/sendMessage');
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_TIMEOUT        => 15,
+    CURLOPT_POST           => true,
+    CURLOPT_POSTFIELDS     => [
+        'chat_id' => $cfg['tg_chat'],
+        'text'    => '✅ Сервер сайта связался с Telegram — заявки будут приходить сюда.',
+    ],
+]);
+$body = curl_exec($ch);
+$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+echo ($body !== false && $code === 200) ? 'TG_OK' : ('TG_FAIL ' . $code . ' ' . curl_error($ch));
+PHP
+  if ! ftpc --ftp-create-dirs -T "$TMP/$name" "$BASE$name" 2> "$TMP/err.txt"; then
+    bad "не удалось загрузить проверку связи с Telegram"
+    return
+  fi
+  local res
+  res=$(curl -s -m 40 "$URL/$name")
+  ftpc -o /dev/null --list-only -Q "DELE ${REMOTE:+$REMOTE/}$name" "ftp://$FTP_HOST/" 2> /dev/null \
+    || warn "удалите вручную в файловом менеджере: $name"
+
+  case "$res" in
+    TG_OK*)
+      TG_STATUS=ok
+      ok "сервер отправил сообщение в Telegram — заявки будут приходить туда" ;;
+    NO_CONFIG*)
+      warn "на сервере нет настроек бота — запустите скрипт и ответьте Y на вопрос о Telegram" ;;
+    "TG_FAIL 401"*|"TG_FAIL 404"*)
+      bad "Telegram не принял токен — перевыпустите его в @BotFather и запустите скрипт снова" ;;
+    "TG_FAIL 400"*|"TG_FAIL 403"*)
+      bad "Telegram не нашёл чат — нажмите «Start» в чате с ботом и проверьте chat_id" ;;
+    TG_FAIL*)
+      bad "сервер Timeweb не может связаться с Telegram: ${res#TG_FAIL }"
+      echo "    Заявки не потеряются: они пишутся в журнал на сервере и, если указана, на почту."
+      echo "    Сообщите мне — подключу другой канал уведомлений." ;;
+    *)
+      bad "проверка связи вернула неожиданный ответ: $(printf '%s' "$res" | head -c 150)" ;;
+  esac
+}
+
 # ---------- проверка ----------
 bold "Проверка сайта"
 if [ "$HTTPS_READY" = 1 ]; then SCHEME=https; else SCHEME=http; fi
@@ -196,13 +256,13 @@ if [ "$code" = 200 ]; then
   else
     ok "настройки бота снаружи не читаются"
   fi
-  c=$(curl -s -o /dev/null -w '%{http_code}' -m 15 "$URL/leads.csv")
-  case "$c" in 403|404) ok "журнал заявок снаружи недоступен ($c)" ;; *) bad "leads.csv отвечает $c — сообщите мне" ;; esac
 
   if [ "$HTTPS_READY" = 1 ]; then
     r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -m 15 "http://$DOMAIN/")
     case "$r" in 301*https*) ok "http → https перенаправляется" ;; *) warn "редирект на https не сработал: $r" ;; esac
   fi
+
+  server_tg_check
 
   read -r -p "Отправить тестовую заявку через форму сайта? [Y/n]: " ANS
   case "$ANS" in
@@ -216,14 +276,24 @@ if [ "$code" = 200 ]; then
         --data-urlencode "consent=1" \
         --data-urlencode "page=/deploy-check")
       case "$res" in
-        *'"ok":true'*) ok "заявка принята — проверьте Telegram" ;;
+        *'"ok":true'*)
+          if [ "$TG_STATUS" = ok ]; then ok "заявка принята — проверьте Telegram"
+          else ok "заявка принята и записана в журнал на сервере"; fi ;;
         *) bad "обработчик ответил: $res" ;;
       esac
       ;;
   esac
+
+  # Строки журнала начинаются с даты в кавычках — если такое отдаётся наружу, это утечка.
+  if curl -s -m 15 "$URL/leads.csv" | head -c 300 | grep -q '^"20[0-9][0-9]-'; then
+    bad "журнал заявок leads.csv доступен из браузера — не запускайте рекламу, сообщите мне"
+  else
+    ok "журнал заявок снаружи недоступен"
+  fi
 else
   warn "$URL пока не открывается (код $code)"
-  warn "если домен куплен меньше суток назад — DNS ещё обновляется, это нормально"
+  warn "проверьте статус домена в панели Timeweb → «Домены»: он должен быть делегирован"
+  warn "связь сервера с Telegram и тестовую заявку проверю, когда сайт откроется"
 fi
 
 bold "Готово"
