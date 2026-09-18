@@ -127,15 +127,18 @@ read -r -p "Записать настройки бота на сервер? [Y/n
 case "$ANS" in
   n*|N*|н*|Н*) warn "пропускаю — на сервере остаются прежние настройки" ;;
   *)
-    read -r -s -p "Токен бота от @BotFather (ввод не отображается): " TG_TOKEN; echo
-    read -r -p "Ваш chat_id от @userinfobot: " TG_CHAT
-    TG_CHAT=$(printf '%s' "$TG_CHAT" | tr -d '[:space:]')
-
-    if ! printf '%s' "$TG_TOKEN" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
-      bad "токен не похож на токен бота (формат 123456:ABC...)"; exit 1
-    fi
-    if ! printf '%s' "$TG_CHAT" | grep -Eq '^-?[0-9]+$'; then
-      bad "chat_id должен состоять из цифр"; exit 1
+    # Telegram блокируют в России, поэтому канал необязателен: Enter — пропустить.
+    read -r -s -p "Токен бота от @BotFather (Enter — без Telegram): " TG_TOKEN; echo
+    TG_CHAT=""
+    if [ -n "$TG_TOKEN" ]; then
+      if ! printf '%s' "$TG_TOKEN" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
+        bad "токен не похож на токен бота (формат 123456:ABC...)"; exit 1
+      fi
+      read -r -p "Ваш chat_id от @userinfobot: " TG_CHAT
+      TG_CHAT=$(printf '%s' "$TG_CHAT" | tr -d '[:space:]')
+      if ! printf '%s' "$TG_CHAT" | grep -Eq '^-?[0-9]+$'; then
+        bad "chat_id должен состоять из цифр"; exit 1
+      fi
     fi
 
     read -r -p "Дублировать заявки на почту (Enter — не нужно): " MAIL_TO
@@ -166,6 +169,7 @@ case "$ANS" in
     case "$ANS" in y*|Y*|д*|Д*) TG_IPV6=true ;; esac
 
     # Токен уходит в curl через stdin, а не аргументом командной строки.
+    if [ -n "$TG_TOKEN" ]; then
     curl -sS -m 15 -K - > "$TMP/tg.json" 2> "$TMP/err.txt" <<EOF
 url = "https://api.telegram.org/bot$TG_TOKEN/sendMessage"
 data-urlencode = "chat_id=$TG_CHAT"
@@ -183,6 +187,7 @@ EOF
       sed 's/^/    /' "$TMP/tg.json"
       echo "    Проверьте токен и что вы нажали «Start» в чате со своим ботом."
       exit 1
+    fi
     fi
 
     umask 077
