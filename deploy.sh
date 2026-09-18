@@ -146,6 +146,25 @@ case "$ANS" in
     MAIL_FROM=""
     [ -n "$MAIL_TO" ] && MAIL_FROM="info@$DOMAIN"
 
+    # Из России Telegram часто блокируют. SMS — запасной канал, который работает всегда.
+    read -r -p "SMS о заявках через sms.ru — api_id из кабинета (Enter — не нужно): " SMS_API_ID
+    SMS_API_ID=$(printf '%s' "$SMS_API_ID" | tr -d '[:space:]')
+    SMS_TO=""
+    if [ -n "$SMS_API_ID" ]; then
+      if ! printf '%s' "$SMS_API_ID" | grep -Eq '^[A-Fa-f0-9-]{20,60}$'; then
+        bad "api_id не похож на ключ sms.ru"; exit 1
+      fi
+      read -r -p "Номер для SMS [+7 923 333-21-95]: " SMS_TO
+      SMS_TO=$(printf '%s' "${SMS_TO:-+79233332195}" | tr -d '[:space:]()-')
+      if ! printf '%s' "$SMS_TO" | grep -Eq '^\+?[0-9]{11}$'; then
+        bad "номер должен быть в формате +79233332195"; exit 1
+      fi
+    fi
+
+    TG_IPV6=false
+    read -r -p "Telegram с сервера работает только по IPv6? (не знаете — Enter) [y/N]: " ANS
+    case "$ANS" in y*|Y*|д*|Д*) TG_IPV6=true ;; esac
+
     # Токен уходит в curl через stdin, а не аргументом командной строки.
     curl -sS -m 15 -K - > "$TMP/tg.json" 2> "$TMP/err.txt" <<EOF
 url = "https://api.telegram.org/bot$TG_TOKEN/sendMessage"
@@ -172,8 +191,11 @@ EOF
 return [
     'tg_token'  => '$TG_TOKEN',
     'tg_chat'   => '$TG_CHAT',
+    'tg_ipv6'   => $TG_IPV6,
     'mail_to'   => '$MAIL_TO',
     'mail_from' => '$MAIL_FROM',
+    'sms_api_id' => '$SMS_API_ID',
+    'sms_to'     => '$SMS_TO',
     'min_seconds_between' => 20,
 ];
 EOF
@@ -185,55 +207,86 @@ esac
 # Одноразовый скрипт с случайным именем: сервер сам отправляет сообщение
 # в Telegram с настройками из config.local.php, после чего файл удаляется.
 TG_STATUS=unknown
-server_tg_check() {
-  local name="tgcheck-$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 20).php"
+
+# Одноразовый скрипт со случайным именем: сервер сам проверяет, до каких
+# каналов уведомлений он дотягивается. После проверки файл удаляется.
+server_check() {
+  local name="check-$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 20).php"
   cat > "$TMP/$name" <<'PHP'
 <?php
 ini_set('display_errors', '0');
 header('Content-Type: text/plain; charset=utf-8');
 $f = __DIR__ . '/config.local.php';
-if (!is_file($f)) { exit('NO_CONFIG'); }
-$cfg = require $f;
-if (empty($cfg['tg_token']) || empty($cfg['tg_chat'])) { exit('NO_CONFIG'); }
-$ch = curl_init('https://api.telegram.org/bot' . $cfg['tg_token'] . '/sendMessage');
-curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_TIMEOUT        => 15,
-    CURLOPT_POST           => true,
-    CURLOPT_POSTFIELDS     => [
-        'chat_id' => $cfg['tg_chat'],
-        'text'    => '✅ Сервер сайта связался с Telegram — заявки будут приходить сюда.',
-    ],
-]);
-$body = curl_exec($ch);
-$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-echo ($body !== false && $code === 200) ? 'TG_OK' : ('TG_FAIL ' . $code . ' ' . curl_error($ch));
+$cfg = is_file($f) ? require $f : [];
+echo 'PHP ' . PHP_VERSION . "\n";
+
+function tg_try($cfg, $v6) {
+    if (empty($cfg['tg_token']) || empty($cfg['tg_chat'])) return 'NO_CONFIG';
+    $ch = curl_init('https://api.telegram.org/bot' . $cfg['tg_token'] . '/sendMessage');
+    $o = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT        => 12,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => [
+            'chat_id' => $cfg['tg_chat'],
+            'text'    => '✅ Сервер сайта связался с Telegram' . ($v6 ? ' по IPv6' : '') . ' — заявки будут приходить сюда.',
+        ],
+    ];
+    if ($v6) $o[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V6;
+    curl_setopt_array($ch, $o);
+    $b = curl_exec($ch);
+    $c = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    return ($b !== false && $c === 200) ? 'OK' : ('FAIL ' . $c . ' ' . curl_error($ch));
+}
+
+$t4 = tg_try($cfg, false);
+echo 'TG4 ' . $t4 . "\n";
+echo 'TG6 ' . ($t4 === 'OK' ? 'SKIP' : tg_try($cfg, true)) . "\n";
+
+if (!empty($cfg['mail_to']) && !empty($cfg['mail_from'])) {
+    $utf = function ($s) { return '=?UTF-8?B?' . base64_encode($s) . '?='; };
+    $h  = 'From: ' . $utf('Сайт') . ' <' . $cfg['mail_from'] . ">\r\n";
+    $h .= "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n";
+    $body = "Это проверка почтовых уведомлений с сайта.\nЕсли письмо пришло — заявки тоже будут приходить сюда.";
+    echo 'MAIL ' . (@mail($cfg['mail_to'], $utf('Проверка уведомлений с сайта'), $body, $h) ? 'SENT' : 'FAIL') . "\n";
+} else {
+    echo "MAIL SKIP\n";
+}
+echo 'SMS ' . (!empty($cfg['sms_api_id']) && !empty($cfg['sms_to']) ? 'CONFIGURED' : 'SKIP') . "\n";
 PHP
   if ! ftpc --ftp-create-dirs -T "$TMP/$name" "$BASE$name" 2> "$TMP/err.txt"; then
-    bad "не удалось загрузить проверку связи с Telegram"
+    bad "не удалось загрузить проверку каналов уведомлений"
     return
   fi
-  local res
-  res=$(curl -s -m 40 "$URL/$name")
+  local out
+  out=$(curl -s -m 60 "$URL/$name")
   ftpc -o /dev/null --list-only -Q "DELE ${REMOTE:+$REMOTE/}$name" "ftp://$FTP_HOST/" 2> /dev/null \
     || warn "удалите вручную в файловом менеджере: $name"
 
-  case "$res" in
-    TG_OK*)
-      TG_STATUS=ok
-      ok "сервер отправил сообщение в Telegram — заявки будут приходить туда" ;;
-    NO_CONFIG*)
-      warn "на сервере нет настроек бота — запустите скрипт и ответьте Y на вопрос о Telegram" ;;
-    "TG_FAIL 401"*|"TG_FAIL 404"*)
-      bad "Telegram не принял токен — перевыпустите его в @BotFather и запустите скрипт снова" ;;
-    "TG_FAIL 400"*|"TG_FAIL 403"*)
-      bad "Telegram не нашёл чат — нажмите «Start» в чате с ботом и проверьте chat_id" ;;
-    TG_FAIL*)
-      bad "сервер Timeweb не может связаться с Telegram: ${res#TG_FAIL }"
-      echo "    Заявки не потеряются: они пишутся в журнал на сервере и, если указана, на почту."
-      echo "    Сообщите мне — подключу другой канал уведомлений." ;;
-    *)
-      bad "проверка связи вернула неожиданный ответ: $(printf '%s' "$res" | head -c 150)" ;;
+  case "$out" in
+    PHP*) ;;
+    *) bad "проверка вернула неожиданный ответ: $(printf '%s' "$out" | head -c 150)"; return ;;
+  esac
+
+  printf '%s\n' "$out" | while IFS= read -r line; do
+    case "$line" in
+      "PHP "*)          ok "на сервере ${line}" ;;
+      "TG4 OK")         ok "Telegram доступен — заявки будут приходить в бот" ;;
+      "TG4 NO_CONFIG")  warn "настройки бота на сервере отсутствуют" ;;
+      "TG6 OK")         ok "Telegram доступен по IPv6 — включите 'tg_ipv6' => true при следующем запуске" ;;
+      "TG6 SKIP"|"TG6 NO_CONFIG") ;;
+      "TG4 FAIL"*)      warn "Telegram по IPv4 недоступен: ${line#TG4 FAIL }" ;;
+      "TG6 FAIL"*)      bad  "Telegram недоступен и по IPv6 — нужен другой канал уведомлений" ;;
+      "MAIL SENT")      ok "письмо на почту отправлено — проверьте ящик, в том числе «Спам»" ;;
+      "MAIL FAIL")      bad "сервер не смог отправить письмо" ;;
+      "MAIL SKIP")      warn "почта не настроена" ;;
+      "SMS CONFIGURED") ok "SMS-уведомления подключены" ;;
+    esac
+  done
+
+  case "$out" in
+    *"TG4 OK"*|*"TG6 OK"*) TG_STATUS=ok ;;
   esac
 }
 
@@ -262,7 +315,7 @@ if [ "$code" = 200 ]; then
     case "$r" in 301*https*) ok "http → https перенаправляется" ;; *) warn "редирект на https не сработал: $r" ;; esac
   fi
 
-  server_tg_check
+  server_check
 
   read -r -p "Отправить тестовую заявку через форму сайта? [Y/n]: " ANS
   case "$ANS" in

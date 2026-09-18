@@ -16,6 +16,9 @@ $TG_TOKEN   = $cfg['tg_token']  ?? '';
 $TG_CHAT    = $cfg['tg_chat']   ?? '';
 $MAIL_TO    = $cfg['mail_to']   ?? '';
 $MAIL_FROM  = $cfg['mail_from'] ?? '';
+$SMS_API_ID = $cfg['sms_api_id'] ?? '';
+$SMS_TO     = $cfg['sms_to']     ?? '';
+$TG_IPV6    = !empty($cfg['tg_ipv6']);
 $MIN_SECONDS_BETWEEN = $cfg['min_seconds_between'] ?? 20;
 
 // Журнал заявок — на уровень выше public_html, куда веб-сервер не отдаёт файлы.
@@ -95,16 +98,46 @@ $lines[] = "Время: " . date('d.m.Y H:i');
 $text = implode("\n", $lines);
 
 // ---- Telegram ----
+// Из России api.telegram.org часто недоступен. Чтобы посетитель не ждал
+// таймаута на каждой заявке, после неудачи канал отключается на 10 минут.
 $sent = false;
-if ($TG_TOKEN && $TG_CHAT) {
+$breaker = $logDir . '/telegram-down.txt';
+$tgMuted = is_file($breaker) && (time() - (int)@file_get_contents($breaker) < 600);
+
+if ($TG_TOKEN && $TG_CHAT && !$tgMuted) {
     $ch = curl_init("https://api.telegram.org/bot{$TG_TOKEN}/sendMessage");
-    curl_setopt_array($ch, [
+    $opts = [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => 8,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_TIMEOUT        => 7,
         CURLOPT_POST           => true,
         CURLOPT_POSTFIELDS     => ['chat_id' => $TG_CHAT, 'text' => $text],
-    ]);
+    ];
+    if ($TG_IPV6) $opts[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V6;
+    curl_setopt_array($ch, $opts);
     $sent = curl_exec($ch) !== false && curl_getinfo($ch, CURLINFO_HTTP_CODE) === 200;
+    if ($sent) { @unlink($breaker); } else { @file_put_contents($breaker, time()); }
+}
+
+// ---- SMS (sms.ru) ----
+// Мгновенное уведомление на телефон там, где мессенджеры недоступны.
+if ($SMS_API_ID && $SMS_TO) {
+    $smsText = 'Заявка ' . $phone . ($car !== '' ? ', ' . $car : '') . ($sum !== '' ? ', ' . $sum : '');
+    $ch = curl_init('https://sms.ru/sms/send');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_TIMEOUT        => 7,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => [
+            'api_id' => $SMS_API_ID,
+            'to'     => $SMS_TO,
+            'msg'    => mb_substr($smsText, 0, 120),
+            'json'   => 1,
+        ],
+    ]);
+    $r = curl_exec($ch);
+    if ($r !== false && strpos($r, '"status":"OK"') !== false) $sent = true;
 }
 
 // ---- Почта ----
