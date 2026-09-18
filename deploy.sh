@@ -10,7 +10,7 @@ set -u
 cd "$(dirname "$0")" || exit 1
 
 DOMAIN="avtozalog-kazan.ru"
-FILES="index.html privacy.html consent.html terms.html tariffs.html dogovor.html docs.css send.php robots.txt sitemap.xml"
+FILES="index.html privacy.html consent.html terms.html tariffs.html dogovor.html docs.css send.php robots.txt sitemap.xml og.png favicon.ico favicon.svg favicon-32.png icon-192.png apple-touch-icon.png"
 
 bold() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
